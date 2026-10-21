@@ -1,3 +1,4 @@
+import { logger } from "./logger";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import request from "supertest";
 
@@ -102,10 +103,12 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
     }
   });
 
-  it("handles unsupported filter input deterministically", async () => {
+  it("emits stream_search_unsupported_filter for unsupported filter input on /api/streams", async () => {
     streamStoreMocks.listStreams.mockReturnValue([
       stream({ id: "1", assetCode: "USDC", sender: "GALICE" }),
     ]);
+
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
 
     const first = await request(app)
       .get("/api/streams")
@@ -114,18 +117,47 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
       .get("/api/streams")
       .query({ q: "alice", asset: "USDC", bogusFilter: "x" });
 
-    console.log("UNSUPPORTED", first.status, JSON.stringify(first.body));
+    // Behavior preserved: 200, same results as without bogusFilter.
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.total).toBe(1);
+    expect(second.body.data.map((s: any) => s.id)).toEqual(
+      first.body.data.map((s: any) => s.id),
+    );
 
-    expect([200, 400, 500]).toContain(first.status);
-    if (first.status === 200) {
-      expect(first.body.total).toBe((first.body.data ?? []).length);
-      expect(second.body.total).toBe(first.body.total);
-      expect(second.body.data.map((s: any) => s.id)).toEqual(
-        first.body.data.map((s: any) => s.id),
-      );
+    // Signal emitted with key name only (no values leaked).
+    const signals = warnSpy.mock.calls
+      .map(([payload]) => payload as any)
+      .filter((payload) => payload?.event === "stream_search_unsupported_filter");
+    expect(signals.length).toBeGreaterThanOrEqual(2); // one per request
+    for (const payload of signals) {
+      expect(payload.endpoint).toBe("/api/streams");
+      expect(payload.unsupportedFilters).toEqual(["bogusFilter"]);
+      expect(payload.outcome).toBe("ignored");
+      expect(JSON.stringify(payload)).not.toContain('"x"');
     }
+
+    warnSpy.mockRestore();
   });
 
+  it("does not emit the unsupported-filter signal for a normal empty case", async () => {
+    streamStoreMocks.listStreams.mockReturnValue([]);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    const res = await request(app)
+      .get("/api/streams")
+      .query({ q: "alice", asset: "USDC" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.total).toBe(0);
+
+    const signals = warnSpy.mock.calls
+      .map(([payload]) => payload as any)
+      .filter((payload) => payload?.event === "stream_search_unsupported_filter");
+    expect(signals).toEqual([]);
+
+    warnSpy.mockRestore();
+  });
   it("returns identical results for repeated identical search requests", async () => {
     streamStoreMocks.listStreams.mockReturnValue([
       stream({ id: "1", assetCode: "USDC", sender: "GALICE" }),

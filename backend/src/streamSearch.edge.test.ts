@@ -89,7 +89,6 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
       .get("/api/streams")
       .query({ q: "alice", asset: "USDC" });
 
-    // Record actual behavior — do not assume 200 until confirmed.
     console.log("UPPER", upper.status, JSON.stringify(upper.body));
     console.log("LOWER", lower.status, JSON.stringify(lower.body));
 
@@ -117,7 +116,6 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
       .get("/api/streams")
       .query({ q: "alice", asset: "USDC", bogusFilter: "x" });
 
-    // Behavior preserved: 200, same results as without bogusFilter.
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(first.body.total).toBe(1);
@@ -125,11 +123,10 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
       first.body.data.map((s: any) => s.id),
     );
 
-    // Signal emitted with key name only (no values leaked).
     const signals = warnSpy.mock.calls
       .map(([payload]) => payload as any)
       .filter((payload) => payload?.event === "stream_search_unsupported_filter");
-    expect(signals.length).toBeGreaterThanOrEqual(2); // one per request
+    expect(signals.length).toBeGreaterThanOrEqual(2);
     for (const payload of signals) {
       expect(payload.endpoint).toBe("/api/streams");
       expect(payload.unsupportedFilters).toEqual(["bogusFilter"]);
@@ -158,6 +155,7 @@ describe("GET /api/streams search edge cases (SSB-2026-110)", () => {
 
     warnSpy.mockRestore();
   });
+
   it("returns identical results for repeated identical search requests", async () => {
     streamStoreMocks.listStreams.mockReturnValue([
       stream({ id: "1", assetCode: "USDC", sender: "GALICE" }),
